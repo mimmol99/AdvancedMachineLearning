@@ -1,0 +1,38 @@
+# PyTorch & Model files
+*.pth
+*.pt
+*.ckpt
+
+# Datasets
+datasets/raw/*
+datasets/clean/*
+!datasets/clean/debug_first_10.txt  # Teniamo solo questo come esempio
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+detection_env/
+
+# MLflow
+mlruns/
+mlflow.db
+
+# Output and Logs
+charts/
+logs/
+*.log
+nohup.out
+
+# IDEs
+.idea/
+.vscode/
+
+# Hydra config outputs
+outputs/
+multirun/
+*.csv
+clipboard_remote.txt

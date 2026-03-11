@@ -1,0 +1,21 @@
+name: "DeBERTaV3_CRF"
+use_crf: true
+num_labels: 2       
+
+crf_reduction: "token_mean"
+
+loss_weights:
+  alpha_crf: 1.0         # Weight for the standard CRF Negative Log Likelihood
+  alpha_ce: 2.0          # Weight for the Custom Token-Level Cross Entropy
+  alpha_transition: 2 # Transitions penalty
+
+custom_ce:
+  #boundary_weight: 2.0   # Multiplier for tokens exactly at the boundary (0->1 or 1->0)
+  short_chunk_alpha: 10.0 # Controls how heavily short chunks are boosted
+
+backbone:
+  path: "microsoft/deberta-v3-base"
+  freeze: false         
+
+head:
+  dropout: 0.15

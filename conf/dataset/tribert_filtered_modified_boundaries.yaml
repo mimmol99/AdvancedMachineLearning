@@ -1,0 +1,10 @@
+name: "Tribert_Modified_Boundaries"
+path: "datasets/clean/boundary_dataset.csv"
+
+# DeBERTa gestisce fino a 512 token.
+max_length: 512 
+
+#split del dataset in train/val/test
+train_ratio: 0.8
+val_ratio: 0.1
+test_ratio: 0.1
