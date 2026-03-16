@@ -91,11 +91,11 @@ class DebertaCRFBoundaryDetector(nn.Module):
                 
             chunk_start = 0
             for j in range(1, actual_len + 1):
-                # Se l'etichetta cambia o siamo a fine documento, chiudiamo il chunk
+                # Se label cambia o siamo a fine documento, chiudiamo il chunk
                 if j == actual_len or seq_labels[j] != seq_labels[j-1]:
                     chunk_len = j - chunk_start
                     
-                    # Inverse Length Weighting: I chunk corti ricevono un boost maggiore
+                    # Inverse Length Weighting: I chunk corti ricevono boost maggiore
                     len_weight = 1.0 + self.short_chunk_alpha * (1.0 / (chunk_len ** 0.5))
                     weights[i, chunk_start:j] = len_weight
                     chunk_start = j
