@@ -4,7 +4,13 @@ path: "datasets/clean/filtered_tribert.csv"
 # DeBERTa gestisce fino a 512 token.
 max_length: 512 
 
-#split del dataset in train/val/test
+# split del dataset in train/val/test
 train_ratio: 0.8
 val_ratio: 0.1
 test_ratio: 0.1
+
+processing:
+  input_file: "datasets/raw/raw_tribert.xlsx"
+  output_file: "datasets/clean/filtered_tribert.csv"
+  min_boundaries: 2
+  keep_highest_boundaries: true

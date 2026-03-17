@@ -227,6 +227,11 @@ def main(cfg: DictConfig):
 
         mlflow.log_params(OmegaConf.to_container(cfg, resolve=True))
 
+        mlflow.log_artifact(__file__, artifact_path="code") # Salva run_pipeline.py
+        mlflow.log_artifacts("scripts/", artifact_path="code/scripts") # Salva la cartella scripts
+        mlflow.log_artifacts("src/", artifact_path="code/src") # Salva la cartella src
+        mlflow.log_artifacts("conf/", artifact_path="code/conf") # Salva i file yaml
+
         # 2. Inizializza Modello e Tokenizer
         model = DebertaCRFBoundaryDetector(cfg).to(device)
         tokenizer = model.get_tokenizer()
@@ -251,6 +256,21 @@ def main(cfg: DictConfig):
         
         analyze_datasets(train_ds, val_ds, test_ds, tokenizer, chart_dir)
         
+        
+        if mlflow.active_run():
+            try:
+                dataset_name = cfg.dataset.get("name", "TriBERT")
+                # Creiamo l'oggetto dataset per MLflow partendo dal dataframe pandas caricato
+                mlflow_ds = mlflow.data.from_pandas(
+                    train_ds.data, 
+                    source=cfg.dataset.path, 
+                    name=dataset_name
+                )
+                mlflow.log_input(mlflow_ds, context="training")
+            except Exception as e:
+                log.warning(f"⚠️ Impossibile loggare il dataset su MLflow: {e}")
+
+
         # 5. Ottimizzatore
         optimizer = torch.optim.AdamW(
             model.parameters(), 

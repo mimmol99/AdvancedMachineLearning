@@ -8,7 +8,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
-from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score, confusion_matrix
+from sklearn.metrics import (
+    f1_score, accuracy_score, precision_score, recall_score, 
+    confusion_matrix, matthews_corrcoef, cohen_kappa_score
+)
 
 log = logging.getLogger(__name__)
 
@@ -124,15 +127,19 @@ class Trainer:
         prec = precision_score(chunk_true, chunk_pred, average='macro', zero_division=0)
         rec = recall_score(chunk_true, chunk_pred, average='macro', zero_division=0)
         f1 = f1_score(chunk_true, chunk_pred, average='macro', zero_division=0)
+        mcc = matthews_corrcoef(chunk_true, chunk_pred)
+        kappa = cohen_kappa_score(chunk_true, chunk_pred)
 
-        log.info(f"CHUNK-LEVEL {prefix.upper()} | Acc: {acc:.4f} | Prec: {prec:.4f} | Rec: {rec:.4f} | F1 Macro: {f1:.4f}")
+        log.info(f"CHUNK-LEVEL {prefix.upper()} | Acc: {acc:.4f} | Prec: {prec:.4f} | Rec: {rec:.4f} | F1 Macro: {f1:.4f} | MCC: {mcc:.4f} | Kappa: {kappa:.4f}")
 
         if mlflow.active_run():
             metrics_to_log = {
                 f"{prefix}_chunk_acc": acc,
                 f"{prefix}_chunk_precision": prec,
                 f"{prefix}_chunk_recall": rec,
-                f"{prefix}_chunk_f1": f1
+                f"{prefix}_chunk_f1": f1,
+                f"{prefix}_chunk_mcc": mcc,
+                f"{prefix}_chunk_kappa": kappa
             }
             mlflow.log_metrics(metrics_to_log, step=epoch if epoch is not None else 0)
 
@@ -215,8 +222,10 @@ class Trainer:
         prec = precision_score(all_labels, all_preds, average='macro', zero_division=0)
         rec = recall_score(all_labels, all_preds, average='macro', zero_division=0)
         f1 = f1_score(all_labels, all_preds, average='macro', zero_division=0)
+        mcc = matthews_corrcoef(all_labels, all_preds)
+        kappa = cohen_kappa_score(all_labels, all_preds)
 
-        log_msg = f"TOKEN-LEVEL {prefix.upper()} | Loss: {avg_loss:.4f} | Acc: {acc:.4f} | Prec: {prec:.4f} | Rec: {rec:.4f} | F1: {f1:.4f}"
+        log_msg = f"TOKEN-LEVEL {prefix.upper()} | Loss: {avg_loss:.4f} | Acc: {acc:.4f} | Prec: {prec:.4f} | Rec: {rec:.4f} | F1: {f1:.4f} | MCC: {mcc:.4f} | Kappa: {kappa:.4f}"
         if epoch is not None:
             log_msg = f"Epoch {epoch} | " + log_msg
             
@@ -228,7 +237,9 @@ class Trainer:
                 f"{prefix}_token_acc": acc,
                 f"{prefix}_token_precision": prec,
                 f"{prefix}_token_recall": rec,
-                f"{prefix}_token_f1": f1
+                f"{prefix}_token_f1": f1,
+                f"{prefix}_token_mcc": mcc,
+                f"{prefix}_token_kappa": kappa
             }
             # Usa 0 se epoch è None (es. durante il test finale)
             mlflow.log_metrics(metrics_to_log, step=epoch if epoch is not None else 0)
@@ -252,6 +263,12 @@ class Trainer:
         
         dist_correct_h2a, dist_correct_a2h = [], []
         dist_any_boundary = []
+        
+        # Variabili per calcolo F1@K
+        total_matched_k = 0
+        total_true_bounds = 0
+        total_pred_bounds = 0
+        K = 3
         
         num_docs = 0
 
@@ -283,11 +300,17 @@ class Trainer:
 
                     t_h2a, t_a2h = get_boundaries(true_seq)
                     p_h2a, p_a2h = get_boundaries(pred_seq)
-                    p_any = p_h2a + p_a2h  
+                    
+                    t_any = sorted(t_h2a + t_a2h)
+                    p_any = sorted(p_h2a + p_a2h)
                     
                     real_h2a += len(t_h2a); real_a2h += len(t_a2h)
                     pred_h2a += len(p_h2a); pred_a2h += len(p_a2h)
                     
+                    total_true_bounds += len(t_any)
+                    total_pred_bounds += len(p_any)
+
+                    # 1. Distanze Minime 
                     for t in t_h2a:
                         dist_corr = get_min_dist(t, p_h2a)
                         if dist_corr is not None: dist_correct_h2a.append(dist_corr)
@@ -302,6 +325,22 @@ class Trainer:
                         dist_any = get_min_dist(t, p_any)
                         if dist_any is not None: dist_any_boundary.append(dist_any)
                         
+                    # 2. F1@K (Greedy match within K tokens)
+                    matched_p = set()
+                    for t in t_any:
+                        closest_p = None
+                        min_d = float('inf')
+                        for p in p_any:
+                            if p not in matched_p:
+                                d = abs(t - p)
+                                if d < min_d:
+                                    min_d = d
+                                    closest_p = p
+                        if min_d <= K:
+                            matched_p.add(closest_p)
+                            total_matched_k += 1
+                        
+                    # 3. Accuracy by Chunk Length
                     chunk_start = 0
                     for j in range(1, len(true_seq) + 1):
                         if j == len(true_seq) or true_seq[j] != true_seq[j-1]:
@@ -353,10 +392,14 @@ class Trainer:
 
         mean_dist_correct_h2a = np.mean(dist_correct_h2a) if dist_correct_h2a else 0
         mean_dist_correct_a2h = np.mean(dist_correct_a2h) if dist_correct_a2h else 0
-        mean_dist_any = np.mean(dist_any_boundary) if dist_any_boundary else 0
+        # MAE: Mean Absolute Error is identically the mean of dist_any_boundary
+        mae_boundaries = np.mean(dist_any_boundary) if dist_any_boundary else 0
+        
+        # F1@K calculation (K=3)
+        f1_k = 2 * total_matched_k / (total_pred_bounds + total_true_bounds) if (total_pred_bounds + total_true_bounds) > 0 else 0
 
-        labels_dist = ['Nearest Correct\n(H -> AI)', 'Nearest Correct\n(AI -> H)', 'Nearest Any\nBoundary']
-        dist_means = [mean_dist_correct_h2a, mean_dist_correct_a2h, mean_dist_any]
+        labels_dist = ['Nearest Correct\n(H -> AI)', 'Nearest Correct\n(AI -> H)', 'MAE Any\nBoundary']
+        dist_means = [mean_dist_correct_h2a, mean_dist_correct_a2h, mae_boundaries]
 
         fig, ax = plt.subplots(figsize=(8, 6))
         bars = ax.bar(labels_dist, dist_means, color=['#1f77b4', '#ff7f0e', '#2ca02c'])
@@ -402,7 +445,8 @@ class Trainer:
                 "real_a2h_boundaries": real_a2h, "pred_a2h_boundaries": pred_a2h,
                 "mean_nearest_correct_dist_h2a": mean_dist_correct_h2a,
                 "mean_nearest_correct_dist_a2h": mean_dist_correct_a2h,
-                "mean_nearest_any_boundary_dist": mean_dist_any,
+                f"{prefix}_boundary_mae": mae_boundaries,
+                f"{prefix}_boundary_f1_k{K}": f1_k,
                 f"avg_real_total_bounds_{prefix}": avg_real_total,
                 f"avg_pred_total_bounds_{prefix}": avg_pred_total
             })
@@ -415,7 +459,8 @@ class Trainer:
         log.info(f"   Media Boundaries per doc: Real={avg_real_total:.2f}, Pred={avg_pred_total:.2f}")
         log.info(f"   Human->AI: Real={real_h2a}, Pred={pred_h2a} | Nearest Correct Dist = {mean_dist_correct_h2a:.2f}")
         log.info(f"   AI->Human: Real={real_a2h}, Pred={pred_a2h} | Nearest Correct Dist = {mean_dist_correct_a2h:.2f}")
-        log.info(f"   Distanza Media Nearest Any Boundary = {mean_dist_any:.2f}\n")
+        log.info(f"   MAE (Mean Absolute Error) Boundaries = {mae_boundaries:.4f}")
+        log.info(f"   F1@{K} Boundaries = {f1_k:.4f}\n")
         
     def generate_report(self, loader, tokenizer, prefix="test"):
         self.model.eval()
